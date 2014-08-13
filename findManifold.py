@@ -12,6 +12,7 @@ import ctypes
 import contextlib
 import itertools
 import time
+import subprocess
 
 import multiprocessing as mp
 
@@ -25,7 +26,7 @@ elif cpu == 2:
 else:
 	howManyCoresToUse = cpu-1
 
-#howManyCoresToUse = 10
+#howManyCoresToUse = 1
 
 #--------------------------------------------------------------------------------------------------#
 
@@ -36,7 +37,8 @@ print time.strftime('\nlog_%Y-%m-%d_%H-%M-%S' , beginTime)
 print '%d CPU cores available, multiprocessing spawning %d child processes' % (cpu, howManyCoresToUse)
 
 def get_from_multiprocessing(f, args=None):
-	pool = mp.Pool(processes = howManyCoresToUse)
+#	pool = mp.Pool(processes = howManyCoresToUse)
+	pool = mp.Pool()
 	if args:
 		result = pool.apply_async(f, args)
 	else:
@@ -188,7 +190,8 @@ coordinates 		= dict()
 
 Diameter = dict()
 
-from_word_to_context = collections.defaultdict(set) # this dict takes a word as key, and returns a set as value; values of set are the contexts in which the word appears.
+#from_word_to_context = collections.defaultdict(set) # this dict takes a word as key, and returns a set as value; values of set are the contexts in which the word appears.
+from_word_to_context = collections.defaultdict(collections.Counter) # this dict takes a word as key, and returns a collections.Counter dict as the value; the value is a dict with (context, frequency count) pairs.
 
 HeavilyWeightedContexts = dict() # key is a word w1, value is a dict called WeightedContexts. Key of WeightedContexts is a context, value of WeightedContexts is the number of words within a ball around w1 that share that context with w1.
 
@@ -230,7 +233,7 @@ def Normalize(NumberOfWordsForAnalysis, CountOfSharedContexts):
 #def SharedContextsFunction(word1, word2,  from_word_to_context):
 #	return set(from_word_to_context[word1]).intersection(set(from_word_to_context[word2]))
 
-def FindListOfSharedContexts(word1, word2,  from_word_to_context):
+def FindListOfSharedContexts(word1, word2,  from_word_to_context): ## function not used currently
 #def SharedContextsFunction(word1, word2,  from_word_to_context):
 	returnedcontexts = ()
 	for context in from_word_to_context[word1]:
@@ -243,7 +246,7 @@ def GetNumberOfSharedContexts(word1, word2, from_word_to_context):
 #	word1contextSet = from_word_to_context[word1] # set of contexts 
 #	word2contextSet = from_word_to_context[word2] # set of contexts
 
-	return len(from_word_to_context[word1] & from_word_to_context[word2])
+	return len(set(from_word_to_context[word1]) & set(from_word_to_context[word2]))
 
 #	count = 0
 #	if len(from_word_to_context[word1]) < len(from_word_to_context[word2]):
@@ -261,7 +264,7 @@ def GetNumberOfSharedContexts(word1, word2, from_word_to_context):
 
 	
 
-def WeightedSharedContextsFunction(word1, word2, from_word_to_context,HeavilyWeightedContexts, weight):
+def WeightedSharedContextsFunction(word1, word2, from_word_to_context,HeavilyWeightedContexts, weight): # function not used currently
 	count = 0
 	for context in from_word_to_context[word1]:
 		if context in from_word_to_context[word2]:
@@ -364,7 +367,8 @@ for line in trigramfile:
 #		if not context in contexts:
 #			contexts[context] = dict()
 #		contexts[context][thisword]  = trigram_count
-		from_word_to_context[wordno].add(context)
+#		from_word_to_context[wordno].add(context)
+		from_word_to_context[wordno][context] += 1
 
 	#Left trigrams
 	thisword = thesewords[0]
@@ -374,7 +378,8 @@ for line in trigramfile:
 #		if not context in contexts:
 #			contexts[context] = dict()
 #		contexts[context][thisword] = trigram_count
-		from_word_to_context[wordno].add(context)
+#		from_word_to_context[wordno].add(context)
+		from_word_to_context[wordno][context] += 1
 			
 	#Right trigrams
 	thisword = thesewords[2]
@@ -384,7 +389,8 @@ for line in trigramfile:
 #		if not context in contexts:
 #			contexts[context] = dict()
 #		contexts[context][thisword] = trigram_count
-		from_word_to_context[wordno].add(context)
+#		from_word_to_context[wordno].add(context)
+		from_word_to_context[wordno][context] += 1
 
  
 #---------------------------------------------------------------------------#
@@ -404,7 +410,8 @@ if True:
 #			if not context in contexts:
 #				contexts[context] = dict()
 #			contexts[context][thisword] =1
-			from_word_to_context[wordno].add(context)
+#			from_word_to_context[wordno].add(context)
+			from_word_to_context[wordno][context] += 1
 
 		 
 		thisword = thesewords[0]
@@ -413,13 +420,14 @@ if True:
 #			if not context in contexts:
 #				contexts[context] = dict()
 #			contexts[context][thisword] = 1
-			from_word_to_context[wordno].add(context)
-		 
+#			from_word_to_context[wordno].add(context)
+			from_word_to_context[wordno][context] += 1
  
 print '...writing in from-word-to-contexts file.',
 
 for (wordno, word) in enumerate(analyzedwordlist):
-	print>> outfileFromWordToContexts, '%s\t%s' % (word, '\t'.join(from_word_to_context[wordno]))
+	contextOrderedList = [context for (context, freq) in from_word_to_context[wordno].most_common()]
+	print>> outfileFromWordToContexts, '%s\t%s' % (word, '\t'.join(contextOrderedList))
 outfileFromWordToContexts.close()
 
 print '   done.'
@@ -857,5 +865,6 @@ timeDifference = (time.mktime(endTime) - time.mktime(beginTime)) / 60
 print time.strftime('log_%Y-%m-%d_%H-%M-%S' ,endTime)
 print 'amount of time taken:', timeDifference, 'minutes'
 
-
+subprocess.call(('cp', outfilenameFromWordToContexts, '.'))
+subprocess.call(('cp', outfilenameNeighbors, '.'))
 
