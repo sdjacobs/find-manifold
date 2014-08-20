@@ -1,4 +1,12 @@
-#-*- coding: <utf-16> -*- 
+#-----------------------------------------------------------------------#
+#
+#	This program takes n-gram files and a word list	
+#	and creates a file with lists of most similar words.
+#	John Goldsmith and Wang Xiuli 2012.
+#	Jackson Lee 2014
+#
+#-----------------------------------------------------------------------#
+
 import codecs
 import os
 import sys
@@ -9,76 +17,46 @@ import collections
 import numpy as np
 import networkx as nx
 import ctypes
-import contextlib
 import itertools
 import time
 import subprocess
+from contextlib import closing
 
 import multiprocessing as mp
 
-useMultiprocessing = True
-
-cpu = mp.cpu_count()
-if cpu == 1:
-	howManyCoresToUse = 1
-elif cpu == 2:
-	howManyCoresToUse = 2
-else:
-	howManyCoresToUse = cpu-1
-
-#howManyCoresToUse = 1
-
 #--------------------------------------------------------------------------------------------------#
 
+timeFormat = '      current time: %Y-%m-%d %H:%M:%S'
+
 beginTime = time.localtime()
+print
+print time.strftime(timeFormat , beginTime)
 
-print time.strftime('\nlog_%Y-%m-%d_%H-%M-%S' , beginTime)
+#--------------------------------------------------------------------------------------------------#
+# multiprocessing settings and associated functions
 
-print '%d CPU cores available, multiprocessing spawning %d child processes' % (cpu, howManyCoresToUse)
+cpu = mp.cpu_count()
+if cpu > 2:
+	howManyCoresToUse = cpu-1
+else:
+	howManyCoresToUse = cpu
+
+print 'multiprocessing spawning %d child processes' % (howManyCoresToUse)
 
 def get_from_multiprocessing(f, args=None):
-#	pool = mp.Pool(processes = howManyCoresToUse)
-	pool = mp.Pool()
+	global howManyCoresToUse
+	pool = mp.Pool(processes = howManyCoresToUse)
+#	pool = mp.Pool()
 	if args:
 		result = pool.apply_async(f, args)
 	else:
 		result = pool.apply_async(f)
-	pool.close()
+#	pool.close()
 	return result.get()
 
-#useMultiprocessing_response = raw_input('use multiprocessing? (Y/n) ')
-#if useMultiprocessing_response.lower() != 'n':
-#	useMultiprocessing = True
-#	print 'multiprocessing enabled'
-#else:
-#	useMultiprocessing = False
-#	print 'multiprocessing disabled'
-#if useMultiprocessing:
-#	howManyCoresToUse_response = raw_input('how many child processes? (there are %d CPU cores on this machine) ' % (mp.cpu_count()))
-#	howManyCoresToUse = int(howManyCoresToUse_response)
-
-import re
-def sep(s, thou=",", dec="."):
-	integer, decimal = s.split(".")
-	integer = re.sub(r"\B(?=(?:\d{3})+$)", thou, integer)
-	return integer + dec + decimal
-
-#-----------------------------------------------------------------------#
-#									#
-#	This program takes a trigram file and a word list		#	
-#	and creates a file with lists of most similar words.		#
-#	John Goldsmith and Wang Xiuli 2012.		Jackson Lee 2014		#
-#									#
-#-----------------------------------------------------------------------#
-#---------------------------------------------------------------------------#
-#	helper functions
-#---------------------------------------------------------------------------#
-# 
-#
-
-# 1 May 2014: Changed contexts to a dict whose value is dict, not list. JG.
-
-
+def compute_chunksize(N, howManyCoresToUse):
+	floatNum = float(N/howManyCoresToUse) / 10
+	return int(math.ceil(floatNum) * 10)
 
 #---------------------------------------------------------------------------#
 #	Variables to be changed by user
@@ -96,6 +74,11 @@ datafolder			= "../../data/"
 
 ngramfolder   		= datafolder + languagename + "/ngrams/"
 outfolder	 		= datafolder + languagename + "/neighbors/"
+wordcontextfolder	= datafolder + languagename + "/word_contexts/"
+
+NumberOfEigenvectors 		= 11
+
+punctuation 		= " $/+.,;:?!()\"[]"
 
 if '-m' in sys.argv:
 	runningOnMidway = True
@@ -122,8 +105,8 @@ try:
 	if len(sys.argv) < 2:
 		NumberOfNeighbors = 9
 		NumberOfWordsForAnalysis = 1000
-		quitKeyboard = raw_input('default values: NumberOfWordsForAnalysis = 1000, NumberOfNeighbors = 9\nContinue? [N/y]')
-		if quitKeyboard.lower() == 'y':
+		continueKeyboard = raw_input('default values: NumberOfWordsForAnalysis = 1000, NumberOfNeighbors = 9\nContinue? [N/y] ')
+		if continueKeyboard.lower() != 'y':
 			print '\nprogram terminated\n'
 			sys.exit()
 	elif len(sys.argv) == 2:
@@ -136,15 +119,6 @@ except:
 	print 'usage: python findManifold.py [NumberOfWordsForAnalysis] [NumberOfNeighbors]'
 	sys.exit()
 
-
-NumberOfEigenvectors 		= 11
-
-punctuation 		= " $/+.,;:?!()\"[]"
-
-
-
-
-
 #---------------------------------------------------------------------------#
 #	File names
 #---------------------------------------------------------------------------#
@@ -154,11 +128,11 @@ infileTrigramsname 	= ngramfolder + shortfilename	+ "_trigrams.txt"
 infileWordsname 	= ngramfolder   + shortfilename	+ "_words.txt" 
 outfilenameEigenvectors	= outfolder	 + outshortfilename + "_words_eigenvectors" + ".txt"
 outfilenameNeighbors	= outfolder	 + outshortfilename + "_" + str(NumberOfWordsForAnalysis) + "_" + str(NumberOfNeighbors) + "_nearest_neighbors.txt"
-outfilenameNeighborsGraphml	= outfolder	 + outshortfilename + "_" + str(NumberOfWordsForAnalysis) + "_nearest_neighbors.graphml"
+#outfilenameNeighborsGraphml	= outfolder	 + outshortfilename + "_" + str(NumberOfWordsForAnalysis) + "_nearest_neighbors.graphml"
 outfilenameLatex 	= outfolder	 + outshortfilename + "_latex.tex"
 outfilenameContexts	 = outfolder	 + outshortfilename + "_contexts.txt"
 outfilenameFromWordToContexts	 = outfolder	 + outshortfilename + "_" + str(NumberOfWordsForAnalysis)  + "_from-word-to-contexts.txt"
-outCSVname = outfilenameNeighbors + '.temp.csv'
+#outCSVname = outfilenameNeighbors + '.temp.csv'
 
 if (not runningOnMidway) and os.path.isfile(outfilenameNeighbors):
 	continutKeyboard = raw_input('The file %s already exists.\nAre you sure you want to override it and re-do all the computation? [N/y] ' % (outfilenameNeighbors))
@@ -190,8 +164,8 @@ coordinates 		= dict()
 
 Diameter = dict()
 
-#from_word_to_context = collections.defaultdict(set) # this dict takes a word as key, and returns a set as value; values of set are the contexts in which the word appears.
 from_word_to_context = collections.defaultdict(collections.Counter) # this dict takes a word as key, and returns a collections.Counter dict as the value; the value is a dict with (context, frequency count) pairs.
+word_context_graph = collections.defaultdict(nx.DiGraph) # this dict takes a word as key, and returns a networkx Graph as value; the Graph is a word context graph
 
 HeavilyWeightedContexts = dict() # key is a word w1, value is a dict called WeightedContexts. Key of WeightedContexts is a context, value of WeightedContexts is the number of words within a ball around w1 that share that context with w1.
 
@@ -199,14 +173,7 @@ HeavilyWeightedContexts = dict() # key is a word w1, value is a dict called Weig
 wordsdistance 		= dict() # key is a word, word1,  being analyzed, value is a pair of word-index-number and euclidean distance (word2, distance). This will be sorted to get the nearest neighbors to word1.
 
 
-#---------------------------------------------------------------------------#
-#	Variables
-#---------------------------------------------------------------------------#
 
-linecount 		= 0
-
-
- 
 #---------------------------------------------------------------------------#
 #	Normalize function
 #---------------------------------------------------------------------------#
@@ -223,15 +190,8 @@ def Normalize(NumberOfWordsForAnalysis, CountOfSharedContexts):
 	return diameterDict
 
 #---------------------------------------------------------------------------#
-#---------------------------------------------------------------------------#
 # this function calculates  contexts shared by two words 
 #---------------------------------------------------------------------------#
-#---------------------------------------------------------------------------#
-#def CountSharedContextsFunction(word1, word2, contexts,from_word_to_context):
-#	return len(set(from_word_to_context[word1]).intersection(set(from_word_to_context[word2])))
-
-#def SharedContextsFunction(word1, word2,  from_word_to_context):
-#	return set(from_word_to_context[word1]).intersection(set(from_word_to_context[word2]))
 
 def FindListOfSharedContexts(word1, word2,  from_word_to_context): ## function not used currently
 #def SharedContextsFunction(word1, word2,  from_word_to_context):
@@ -241,28 +201,9 @@ def FindListOfSharedContexts(word1, word2,  from_word_to_context): ## function n
 			returnedcontexts[context] = 1
 	return returnedcontexts
 
-def GetNumberOfSharedContexts(word1, word2, from_word_to_context):
-
-#	word1contextSet = from_word_to_context[word1] # set of contexts 
-#	word2contextSet = from_word_to_context[word2] # set of contexts
-
+def GetNumberOfSharedContexts(word1, word2):
 	return len(set(from_word_to_context[word1]) & set(from_word_to_context[word2]))
 
-#	count = 0
-#	if len(from_word_to_context[word1]) < len(from_word_to_context[word2]):
-#		for context in from_word_to_context[word1]:
-#			if context in from_word_to_context[word2]:
-#				count += 1
-#		return count	
-#	else:
-#		for context in from_word_to_context[word2]:
-#			if context in from_word_to_context[word1]:
-#				count += 1
-#		return count		
-
-
-
-	
 
 def WeightedSharedContextsFunction(word1, word2, from_word_to_context,HeavilyWeightedContexts, weight): # function not used currently
 	count = 0
@@ -273,7 +214,7 @@ def WeightedSharedContextsFunction(word1, word2, from_word_to_context,HeavilyWei
 			else:
 				count += 1
 	return count			
-#---------------------------------------------------------------------------#
+
 #---------------------------------------------------------------------------#
 
 
@@ -287,9 +228,6 @@ if unicodeFlag:
 	if PrintEigenvectorsFlag:
 		outfileEigenvectors = codecs.open (outfilename1, "w",encoding = FileEncoding)
 	outfileNeighbors	= codecs.open (outfileneighborsname, "w",encoding = FileEncoding)
-
- 
-	
 else:
 	if PrintEigenvectorsFlag:
 		outfileEigenvectors = open (outfilenameEigenvectors, "w")
@@ -319,7 +257,6 @@ for outfile in [outfileNeighbors, outfileFromWordToContexts]:
 
 print >>outfileContexts, "#  The number with each context is the number of distinct words found in that context.\n#" 
 
- 
 #---------------------------------------------------------------------------#
 #	Read trigram file
 #---------------------------------------------------------------------------#
@@ -333,14 +270,6 @@ for line in wordfile:
 print "1. Word file is ", infileWordsname, '\t corpus has', len(mywords), 'words'
 wordfile.close()
 
-#analyzedwordlist = sorted(mywords,key=mywords.__getitem__,reverse=True)
-#analyzedwordlist[NumberOfWordsForAnalysis:] = []
-
-#if NumberOfWordsForAnalysis > len(analyzedwordlist) :
-#	print "We will reduce NumberOfWordsForAnalysis to" , len(analyzedwordlist)
-#	NumberOfWordsForAnalysis = len(analyzedwordlist)
-
-
 if NumberOfWordsForAnalysis > len(mywords):
 	NumberOfWordsForAnalysis = len(mywords)
 	print 'number of words for analysis reduced to', NumberOfWordsForAnalysis
@@ -351,14 +280,11 @@ analyzedwordset = set(analyzedwordlist)
 for i in range(NumberOfWordsForAnalysis):
 	analyzedworddict[analyzedwordlist[i]] = i
 
-
- 
 print "2. Reading in trigram file."
 for line in trigramfile:
 	if line.startswith('#'):
 		continue
 	thesewords = line.split()
-	linecount += 1
 
 	thisword = thesewords[1]
 	if thisword in analyzedwordset:
@@ -369,6 +295,8 @@ for line in trigramfile:
 #		contexts[context][thisword]  = trigram_count
 #		from_word_to_context[wordno].add(context)
 		from_word_to_context[wordno][context] += 1
+		word_context_graph[wordno].add_edge(thesewords[0], '_')
+		word_context_graph[wordno].add_edge('_', thesewords[2])
 
 	#Left trigrams
 	thisword = thesewords[0]
@@ -380,7 +308,9 @@ for line in trigramfile:
 #		contexts[context][thisword] = trigram_count
 #		from_word_to_context[wordno].add(context)
 		from_word_to_context[wordno][context] += 1
-			
+		word_context_graph[wordno].add_edge(thesewords[1], thesewords[2])
+		word_context_graph[wordno].add_edge('_', thesewords[1])
+
 	#Right trigrams
 	thisword = thesewords[2]
 	if thisword   in analyzedwordset:	
@@ -391,38 +321,42 @@ for line in trigramfile:
 #		contexts[context][thisword] = trigram_count
 #		from_word_to_context[wordno].add(context)
 		from_word_to_context[wordno][context] += 1
+		word_context_graph[wordno].add_edge(thesewords[0], thesewords[1])
+		word_context_graph[wordno].add_edge(thesewords[1], '_')
 
  
 #---------------------------------------------------------------------------#
 #	Read bigram file
 #---------------------------------------------------------------------------#
-if True: 
-	print "...Reading in bigram file."
-	for line in bigramfile:
-		linecount += 1
-		thesewords = line.split()
-		if thesewords[0] == "#":
-			continue
-	  
-		thisword = thesewords[1]
-		if thisword in analyzedwordset:
-			context = thesewords[0] + " __ " 
+print "...Reading in bigram file."
+for line in bigramfile:
+	thesewords = line.split()
+	if thesewords[0] == "#":
+		continue
+  
+	thisword = thesewords[1]
+	if thisword in analyzedwordset:
+		context = thesewords[0] + " __ " 
 #			if not context in contexts:
 #				contexts[context] = dict()
 #			contexts[context][thisword] =1
 #			from_word_to_context[wordno].add(context)
-			from_word_to_context[wordno][context] += 1
+		from_word_to_context[wordno][context] += 1
+		word_context_graph[wordno].add_edge(thesewords[0], '_')
 
-		 
-		thisword = thesewords[0]
-		if thisword in analyzedwordset:
-			context = "__ " + thesewords[1]  
+	 
+	thisword = thesewords[0]
+	if thisword in analyzedwordset:
+		context = "__ " + thesewords[1]  
 #			if not context in contexts:
 #				contexts[context] = dict()
 #			contexts[context][thisword] = 1
 #			from_word_to_context[wordno].add(context)
-			from_word_to_context[wordno][context] += 1
- 
+		from_word_to_context[wordno][context] += 1
+		word_context_graph[wordno].add_edge('_', thesewords[1])
+
+#---------------------------------------------------------------------------#
+
 print '...writing in from-word-to-contexts file.',
 
 for (wordno, word) in enumerate(analyzedwordlist):
@@ -431,43 +365,55 @@ for (wordno, word) in enumerate(analyzedwordlist):
 outfileFromWordToContexts.close()
 
 print '   done.'
- 
+
+#---------------------------------------------------------------------------#
+
+print '...writing in word context graphs',
+
+for (wordno, word) in enumerate(analyzedwordlist):
+	numOfDigits = len(str(NumberOfWordsForAnalysis))
+	g = word_context_graph[wordno]
+	outGexf = wordcontextfolder + str(wordno).zfill(numOfDigits) + '_' + word + '_' + str(g.number_of_nodes()) + '.gexf'
+	nx.write_gexf(g, outGexf)
+
+print '   done.'
+
+#---------------------------------------------------------------------------#
  
 print "3. End of words and counts."
- 
+
 
 #---------------------------------------------------------------------------#
 #	Count context features shared by words
 #---------------------------------------------------------------------------#
 
-print time.strftime('        log_%Y-%m-%d_%H-%M-%S' ,time.localtime())
+print time.strftime(timeFormat ,time.localtime())
 print "4. Counting context features shared by words...",
 
+CountOfSharedContexts_shared = mp.Array(ctypes.c_double, NumberOfWordsForAnalysis ** 2)
 
+def init(shared_arr):
+	global CountOfSharedContexts_shared
+	CountOfSharedContexts_shared = shared_arr # must be inherited, not passed as an argument
 
-# ###### not using multiprocessing ########
+def counting_context_features(wordno1):
+	arr = np.frombuffer(CountOfSharedContexts_shared.get_obj())
+	arr.shape = (NumberOfWordsForAnalysis, NumberOfWordsForAnalysis)
 
-#print 'not using multiprocessing...'
-#CountOfSharedContexts1 = np.zeros( (NumberOfWordsForAnalysis,NumberOfWordsForAnalysis) )
-#for wordno1 in range(NumberOfWordsForAnalysis):
-#	word1 = analyzedwordlist[wordno1]
-#	for wordno2 in  range(wordno1+1, len(analyzedwordlist)):		 
-#		word2 = analyzedwordlist[wordno2]
-#		CountOfSharedContexts1[wordno1,wordno2] =   GetNumberOfSharedContexts(word1, word2,  from_word_to_context) 
-#		CountOfSharedContexts1[wordno2,wordno1] =   CountOfSharedContexts1[wordno1,wordno2] 
-#CountOfSharedContexts = CountOfSharedContexts1
+	for wordno2 in range(wordno1+1, NumberOfWordsForAnalysis):
+		arr[wordno1,wordno2] =   GetNumberOfSharedContexts(wordno1, wordno2)
+	arr.shape = NumberOfWordsForAnalysis ** 2
 
-# ###### END OF not using multiprocessing ########
+with closing(mp.Pool(processes=howManyCoresToUse, initializer=init, initargs=(CountOfSharedContexts_shared,))) as p:
+#	p.imap(counting_context_features, range(NumberOfWordsForAnalysis), chunksize=compute_chunksize(NumberOfWordsForAnalysis, howManyCoresToUse))
+	p.map_async(counting_context_features, range(NumberOfWordsForAnalysis), chunksize=compute_chunksize(NumberOfWordsForAnalysis, howManyCoresToUse))
 
+p.join()
 
-def counting_context_features():
-	CountOfSharedContexts1 = np.zeros( (NumberOfWordsForAnalysis,NumberOfWordsForAnalysis) )
-	for wordno1 in range(NumberOfWordsForAnalysis):
-		for wordno2 in  range(wordno1+1, NumberOfWordsForAnalysis):		 
-			CountOfSharedContexts1[wordno1,wordno2] =   GetNumberOfSharedContexts(wordno1, wordno2,  from_word_to_context)
-	return CountOfSharedContexts1
+print '\n    multiprocessing done, computing final matrix...  ',
 
-CountOfSharedContexts = get_from_multiprocessing(counting_context_features)
+CountOfSharedContexts = np.frombuffer(CountOfSharedContexts_shared.get_obj())
+CountOfSharedContexts.shape = (NumberOfWordsForAnalysis, NumberOfWordsForAnalysis)
 CountOfSharedContexts = CountOfSharedContexts + CountOfSharedContexts.T
 
 del from_word_to_context
@@ -479,7 +425,7 @@ print 'done.'
 #---------------------------------------------------------------------------#
 
 
-print time.strftime('        log_%Y-%m-%d_%H-%M-%S' ,time.localtime())
+print time.strftime(timeFormat ,time.localtime())
 print "5. Normalizing nearness measurements....",
 
 
@@ -492,7 +438,7 @@ print "\t Done."
 #	Incidence graph
 #---------------------------------------------------------------------------#
 
-print time.strftime('        log_%Y-%m-%d_%H-%M-%S' ,time.localtime())
+print time.strftime(timeFormat ,time.localtime())
 print "6. We compute the incidence graph....",
 
 def compute_incidence_graph():
@@ -522,7 +468,7 @@ print "Done."
 #	Normalize the laplacian.
 #---------------------------------------------------------------------------#
 
-print time.strftime('        log_%Y-%m-%d_%H-%M-%S' ,time.localtime())
+print time.strftime(timeFormat ,time.localtime())
 print "7. We normalize the laplacian....",
 
 def compute_laplacian():
@@ -551,7 +497,7 @@ print "Done."
 #	Compute eigenvectors.
 #---------------------------------------------------------------------------#
 
-print time.strftime('        log_%Y-%m-%d_%H-%M-%S' ,time.localtime())
+print time.strftime(timeFormat ,time.localtime())
 print "8. Compute eigenvectors...",
 
 myeigenvalues, myeigenvectors = get_from_multiprocessing(np.linalg.eigh, [mylaplacian])
@@ -628,7 +574,7 @@ print >>outfileLatex, "\\end{document}"
 #	Finding coordinates in space of low dimensionality
 #---------------------------------------------------------------------------#
 
-print time.strftime('        log_%Y-%m-%d_%H-%M-%S' ,time.localtime())
+print time.strftime(timeFormat ,time.localtime())
 print "10. Finding coordinates in space of low dimensionality."
 
 def compute_coordinates():
@@ -641,68 +587,93 @@ def compute_coordinates():
 
 coordinates = get_from_multiprocessing(compute_coordinates)
 
-print time.strftime('        log_%Y-%m-%d_%H-%M-%S' ,time.localtime())
+print time.strftime(timeFormat ,time.localtime())
 print '       coordinates computed. Now computing distances between words...',
 
 del myeigenvectors
 
 
-def compute_words_distance():
-	wordsdistance = dict()
+wordsdistance_shared = mp.Array(ctypes.c_double, NumberOfWordsForAnalysis ** 2)
 
-	for wordno in range(NumberOfWordsForAnalysis):
-		wordsdistance[wordno] = dict()
+def compute_words_distance(wordno1):
+	arr = np.frombuffer(wordsdistance_shared.get_obj())
+	arr.shape = (NumberOfWordsForAnalysis, NumberOfWordsForAnalysis)
 
-	for (wordno1, wordno2) in itertools.combinations(range(NumberOfWordsForAnalysis), 2):
+	for wordno2 in range(wordno1+1, NumberOfWordsForAnalysis):
 		distance = 0
 		for coordno in range(NumberOfEigenvectors):
 			x = coordinates[wordno1][coordno] - coordinates[wordno2][coordno]
 			distance += abs(x ** 3)
-#		wordsdistance[(wordno1, wordno2)] = distance
-		wordsdistance[wordno1][wordno2] = distance
-		wordsdistance[wordno2][wordno1] = distance
+		arr[wordno1, wordno2] = distance
+#		arr[wordno2, wordno1] = distance
 
-	return wordsdistance
+	arr.shape = NumberOfWordsForAnalysis ** 2
 
-wordsdistance = get_from_multiprocessing(compute_words_distance)
+with closing(mp.Pool(processes=howManyCoresToUse, initializer=init, initargs=(wordsdistance_shared, ))) as p:
+	p.map_async(compute_words_distance, range(NumberOfWordsForAnalysis), chunksize=compute_chunksize(NumberOfWordsForAnalysis, howManyCoresToUse))
 
-#print '\nworddistance:\n'
-#for (i,j) in itertools.product(range(10),repeat=2):
-#	print '{0:10s} {1:10s} {2:5.10f}'.format(analyzedwordlist[i], analyzedwordlist[j], wordsdistance[i][j])
+p.join()
+
+wordsdistance = np.frombuffer(wordsdistance_shared.get_obj())
+wordsdistance.shape = (NumberOfWordsForAnalysis, NumberOfWordsForAnalysis)
+
+wordsdistance = wordsdistance + wordsdistance.T
+
+#def compute_words_distance():
+#	wordsdistance = dict()
+
+#	for wordno in range(NumberOfWordsForAnalysis):
+#		wordsdistance[wordno] = dict()
+
+#	for (wordno1, wordno2) in itertools.combinations(range(NumberOfWordsForAnalysis), 2):
+#		distance = 0
+#		for coordno in range(NumberOfEigenvectors):
+#			x = coordinates[wordno1][coordno] - coordinates[wordno2][coordno]
+#			distance += abs(x ** 3)
+##		wordsdistance[(wordno1, wordno2)] = distance
+#		wordsdistance[wordno1][wordno2] = distance
+#		wordsdistance[wordno2][wordno1] = distance
+
+#	return wordsdistance
+
+#wordsdistance = get_from_multiprocessing(compute_words_distance)
+
+
 
 print 'Done.'
 
-print time.strftime('        log_%Y-%m-%d_%H-%M-%S' ,time.localtime())
-print '       Writing the word distance dict to CSV...',
+#print time.strftime(timeFormat ,time.localtime())
+#print '       Writing the word distance dict to CSV...',
 
-outCSVfile = open(outCSVname, 'w')
+#outCSVfile = open(outCSVname, 'w')
 
-for (wordno1, wordno2) in itertools.combinations(range(NumberOfWordsForAnalysis), 2):
-	outCSVfile.write('%d,%d,%f\n' % (wordno1, wordno2, wordsdistance[wordno1][wordno2]))
+#for (wordno1, wordno2) in itertools.combinations(range(NumberOfWordsForAnalysis), 2):
+#	outCSVfile.write('%d,%d,%f\n' % (wordno1, wordno2, wordsdistance[wordno1, wordno2]))
 
-outCSVfile.close()
+#outCSVfile.close()
 
-print 'Done.'
+#print 'Done.'
 
 #---------------------------------------------------------------------------#
 #	 Finding closest neighbors on the manifold's approximation
 #---------------------------------------------------------------------------#
 
-print time.strftime('        log_%Y-%m-%d_%H-%M-%S' ,time.localtime())
-print "11. Finding closest neighbors on the manifold('s approximation)."
+#print time.strftime(timeFormat ,time.localtime())
+#print "11. Finding closest neighbors on the manifold('s approximation)."
 
 
-def compute_graph():
-	mygraph = nx.Graph()
-	for (wordno, word1)  in enumerate(analyzedwordlist):
-		mygraph.add_node(word1, wordindex=wordno)
-	return mygraph
+#def compute_graph():
+#	mygraph = nx.Graph()
+#	for (wordno, word1)  in enumerate(analyzedwordlist):
+#		mygraph.add_node(word1, wordindex=wordno)
+#	return mygraph
 
-mygraph = get_from_multiprocessing(compute_graph)
+#mygraph = get_from_multiprocessing(compute_graph)
 
 
-print time.strftime('        log_%Y-%m-%d_%H-%M-%S' ,time.localtime())
-print '      graph initialized. Computing nearest neighbors now... ',
+print time.strftime(timeFormat ,time.localtime())
+#print '      graph initialized. Computing nearest neighbors now... ',
+print '      computing nearest neighbors now... ',
 
 
 
@@ -712,10 +683,11 @@ def compute_closest_neighbors():
 #	wordsdistanceSorted = sorted(wordsdistance.items(), key=lambda x:x[1])
 
 	for (wordno1, word1) in enumerate(analyzedwordlist):
-#		closestNeighbors[wordno1] = list() # list of word indices
-#		neighborWordNumberList = [wordno for (wordno, distance) in sorted(wordsdistance[wordno1].items(), key=lambda x:x[1])]
 
-		neighborWordNumberList = [wordno2 for (wordno2, distance) in sorted(wordsdistance[wordno1].items(), key=lambda x:x[1])]
+#		neighborWordNumberList = [wordno2 for (wordno2, distance) in sorted(wordsdistance[wordno1].items(), key=lambda x:x[1])]
+
+		neighborWordNumberList = [wordno2 for (wordno2, distance) in sorted(enumerate(list(wordsdistance[wordno1])), key=lambda x:x[1])][1:]
+		# ignore the first element in list because the first element is wordno1 itself
 
 #################
 
@@ -751,8 +723,8 @@ def compute_closest_neighbors():
 
 		closestNeighbors[wordno1] = neighborWordNumberList
 
-		for (idx, wordno2) in enumerate(neighborWordNumberList):
-			mygraph.add_edge(word1, analyzedwordlist[wordno2], rank=idx+1)
+#		for (idx, wordno2) in enumerate(neighborWordNumberList):
+#			mygraph.add_edge(word1, analyzedwordlist[wordno2], rank=idx+1)
 
 
 #		for (idx, wordno2) in enumerate(neighborWordNumberList):		
@@ -775,10 +747,12 @@ for (wordno, word) in enumerate(analyzedwordlist):
 #for (word, neighborList) in sorted(closestNeighbors.items(), key=lambda x: analyzedworddict[x[0]]):
 #	print >>outfileNeighbors, word, ' '.join(neighborList)
 
-print 'done.'
-print time.strftime('        log_%Y-%m-%d_%H-%M-%S' ,time.localtime())
+outfileNeighbors.close()
 
-nx.write_graphml(mygraph,outfilenameNeighborsGraphml)
+print 'done.'
+print time.strftime(timeFormat ,time.localtime())
+
+#nx.write_graphml(mygraph,outfilenameNeighborsGraphml)
  
 
 
@@ -823,9 +797,7 @@ if False:
 		
 	print "... Done." 
 
- 
-		
-outfileNeighbors.close()
+
 #---------------------------------------------------------------------------#
 #	 Print contexts shared by nearby words: not finished
 #---------------------------------------------------------------------------#
@@ -856,7 +828,6 @@ print "Exiting successfully."
 
 if PrintEigenvectorsFlag:
 	outfileEigenvectors.close()
-outfileNeighbors.close()
 
 endTime = time.localtime()
 
@@ -865,6 +836,5 @@ timeDifference = (time.mktime(endTime) - time.mktime(beginTime)) / 60
 print time.strftime('log_%Y-%m-%d_%H-%M-%S' ,endTime)
 print 'amount of time taken:', timeDifference, 'minutes'
 
-subprocess.call(('cp', outfilenameFromWordToContexts, '.'))
+#subprocess.call(('cp', outfilenameFromWordToContexts, '.'))
 subprocess.call(('cp', outfilenameNeighbors, '.'))
-
