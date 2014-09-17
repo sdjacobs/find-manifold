@@ -33,15 +33,17 @@ print
 print time.strftime(timeFormat , beginTime)
 
 #--------------------------------------------------------------------------------------------------#
-# multiprocessing settings and associated functions
 
-cpu = mp.cpu_count()
-if cpu > 2:
-	howManyCoresToUse = cpu-1
-else:
-	howManyCoresToUse = cpu
+# multiprocessing settings and associated functions  
+   
+cpu = mp.cpu_count()  
+if cpu > 2:  
+    howManyCoresToUse = cpu-1  
+else:  
+   howManyCoresToUse = cpu  
+   
+print 'multiprocessing spawning %d child processes' % (howManyCoresToUse)  
 
-print 'multiprocessing spawning %d child processes' % (howManyCoresToUse)
 
 #def get_from_multiprocessing(f, args=None):
 #	global howManyCoresToUse
@@ -199,9 +201,30 @@ def Normalize(NumberOfWordsForAnalysis, CountOfSharedContexts):
 #			returnedcontexts[context] = 1
 #	return returnedcontexts
 
-def GetNumberOfSharedContexts(word1, word2):
-	return len(set(from_word_to_context[word1]) & set(from_word_to_context[word2]))
+#def GetNumberOfSharedContexts(word1, word2):
+#	return len(set(from_word_to_context[word1]) & set(from_word_to_context[word2]))
 
+
+#Optimized GetNumberOfSharedContexts. Walk down sorted lists.
+def GetNumberOfSharedContexts(word1, word2):
+        x = from_word_to_context[word1].keys()
+        y = from_word_to_context[word2].keys()
+        # keys are already sorted
+        #x.sort()
+        #y.sort()
+        nSC = 0 # number of shared contexts
+        i = 0
+        j = 0
+        while i < len(x) and j < len(y):
+            if x[i] == y[j]:
+                nSC += 1
+                i += 1
+                j += 1
+            elif x[i] < y[j]:
+                i += 1
+            else:
+                j += 1
+        return nSC
 
 #def WeightedSharedContextsFunction(word1, word2, from_word_to_context,HeavilyWeightedContexts, weight): # function not used currently
 #	count = 0
@@ -398,73 +421,20 @@ print "4. Counting context features shared by words...",
 
 datatype = ctypes.c_int
 
-CountOfSharedContexts_shared = mp.Array(datatype, NumberOfWordsForAnalysis ** 2)
-
-def init(shared_arr):
-	global CountOfSharedContexts_shared
-	CountOfSharedContexts_shared = shared_arr # must be inherited, not passed as an argument
 
 #################################################################
 # multiprocessing method 1
 
-def sliceChunks(n, threads):
-	ssum = (1+n) * n / 2 # sequence sum
-	sliceSize = compute_chunksize(ssum, threads)
+def counting_context_features_1core():
+    arr = np.zeros((NumberOfWordsForAnalysis, NumberOfWordsForAnalysis))
+    for word1 in range(0, NumberOfWordsForAnalysis):
+        for word2 in range(word1+1, NumberOfWordsForAnalysis):
+            x = GetNumberOfSharedContexts(word1, word2)
+            arr[word1, word2] = x
+            arr[word2, word1] = x
+    return arr
 
-	resultList = list()
-	currentSum = 0
-	startIdx = 0
-	for i in range(n):
-		currentSum += n - i -1
-
-		if currentSum > sliceSize:
-			resultList.append(range(startIdx, i))
-			startIdx = i+1
-			currentSum = 0
-
-			if len(resultList) == (threads - 1):
-				resultList.append(range(startIdx, n))
-				break
-	return resultList
-
-def counting_context_features(iteratorList):
-	arr = np.frombuffer(CountOfSharedContexts_shared.get_obj(), dtype=datatype)
-	arr.shape = (NumberOfWordsForAnalysis, NumberOfWordsForAnalysis)
-
-	for wordno1 in iteratorList:
-		for wordno2 in range(wordno1+1, NumberOfWordsForAnalysis):
-			arr[wordno1,wordno2] =   GetNumberOfSharedContexts(wordno1, wordno2)
-	arr.shape = NumberOfWordsForAnalysis ** 2
-
-with closing(mp.Pool(processes=howManyCoresToUse, initializer=init, initargs=(CountOfSharedContexts_shared,))) as p:
-	p.map_async(counting_context_features, sliceChunks(NumberOfWordsForAnalysis, howManyCoresToUse))
-
-p.join()
-
-#################################################################
-# multiprocessing method 2
-
-#def counting_context_features(wordno1):
-#	arr = np.frombuffer(CountOfSharedContexts_shared.get_obj())
-#	arr.shape = (NumberOfWordsForAnalysis, NumberOfWordsForAnalysis)
-
-#	for wordno2 in range(wordno1+1, NumberOfWordsForAnalysis):
-#		arr[wordno1,wordno2] =   GetNumberOfSharedContexts(wordno1, wordno2)
-#	arr.shape = NumberOfWordsForAnalysis ** 2
-
-#with closing(mp.Pool(processes=howManyCoresToUse, initializer=init, initargs=(CountOfSharedContexts_shared,))) as p:
-##	p.imap(counting_context_features, range(NumberOfWordsForAnalysis), chunksize=compute_chunksize(NumberOfWordsForAnalysis, howManyCoresToUse))
-#	p.map_async(counting_context_features, range(NumberOfWordsForAnalysis), chunksize=compute_chunksize(NumberOfWordsForAnalysis, howManyCoresToUse))
-
-#p.join()
-
-################################################################
-
-print '\n    multiprocessing done, computing final matrix...  ',
-
-CountOfSharedContexts = np.frombuffer(CountOfSharedContexts_shared.get_obj(), dtype=datatype)
-CountOfSharedContexts.shape = (NumberOfWordsForAnalysis, NumberOfWordsForAnalysis)
-CountOfSharedContexts = CountOfSharedContexts + CountOfSharedContexts.T
+CountOfSharedContexts = counting_context_features_1core()
 
 del from_word_to_context
 
@@ -630,12 +600,12 @@ print >>outfileLatex, "\\end{document}"
 print time.strftime(timeFormat ,time.localtime())
 print "10. Finding coordinates in space of low dimensionality."
 
+# Optimize - use numpy functions
 def compute_coordinates():
-	coordinates = dict()
+	coordinates = np.zeros((NumberOfWordsForAnalysis, NumberOfEigenvectors))
 	for wordno in range(NumberOfWordsForAnalysis):
-		coordinates[wordno]= list() 
 		for eigenno in range(NumberOfEigenvectors):
-			coordinates[wordno].append( myeigenvectors[ wordno, eigenno ] )
+			coordinates[wordno, eigenno] = myeigenvectors[ wordno, eigenno ]
 	return coordinates
 
 #coordinates = get_from_multiprocessing(compute_coordinates)
@@ -648,7 +618,21 @@ del myeigenvectors
 
 datatype = ctypes.c_float
 
-wordsdistance_shared = mp.Array(datatype, NumberOfWordsForAnalysis ** 2)
+
+def compute_words_distance_1core():
+    arr = np.zeros((NumberOfWordsForAnalysis, NumberOfWordsForAnalysis))
+    for wordno1 in range(NumberOfWordsForAnalysis):
+        for wordno2 in range(wordno1+1, NumberOfWordsForAnalysis):        
+            distance = 0
+            x = coordinates[wordno] - coordinates[wordno] # vector
+            distance = np.sum(np.abs(np.power(x, 3)))
+            arr[wordno1, wordno2] = distance
+            arr[wordno2, wordno1] = distance
+    return arr
+
+wordsdistance = compute_words_distance_1core()
+
+#wordsdistance_shared = mp.Array(datatype, NumberOfWordsForAnalysis ** 2)
 
 def compute_words_distance(wordno1):
 	arr = np.frombuffer(wordsdistance_shared.get_obj(), dtype=datatype)
@@ -664,18 +648,18 @@ def compute_words_distance(wordno1):
 
 	arr.shape = NumberOfWordsForAnalysis ** 2
 
-with closing(mp.Pool(processes=howManyCoresToUse, initializer=init, initargs=(wordsdistance_shared, ))) as p:
-	p.map_async(compute_words_distance, range(NumberOfWordsForAnalysis), chunksize=compute_chunksize(NumberOfWordsForAnalysis, howManyCoresToUse))
+#with closing(mp.Pool(processes=howManyCoresToUse, initializer=init, initargs=(wordsdistance_shared, ))) as p:
+#	p.map_async(compute_words_distance, range(NumberOfWordsForAnalysis), chunksize=compute_chunksize(NumberOfWordsForAnalysis, howManyCoresToUse))
 
-p.join()
+#p.join()
 
-wordsdistance = np.frombuffer(wordsdistance_shared.get_obj(), dtype=datatype)
+#wordsdistance = np.frombuffer(wordsdistance_shared.get_obj(), dtype=datatype)
 
 print wordsdistance.shape
 
-wordsdistance.shape = (NumberOfWordsForAnalysis, NumberOfWordsForAnalysis)
+#wordsdistance.shape = (NumberOfWordsForAnalysis, NumberOfWordsForAnalysis)
 
-wordsdistance = wordsdistance + wordsdistance.T
+#wordsdistance = wordsdistance + wordsdistance.T
 
 print 'Done.'
 
