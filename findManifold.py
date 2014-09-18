@@ -201,30 +201,8 @@ def Normalize(NumberOfWordsForAnalysis, CountOfSharedContexts):
 #			returnedcontexts[context] = 1
 #	return returnedcontexts
 
-#def GetNumberOfSharedContexts(word1, word2):
-#	return len(set(from_word_to_context[word1]) & set(from_word_to_context[word2]))
-
-
-#Optimized GetNumberOfSharedContexts. Walk down sorted lists.
 def GetNumberOfSharedContexts(word1, word2):
-        x = from_word_to_context[word1].keys()
-        y = from_word_to_context[word2].keys()
-        # keys are already sorted
-        #x.sort()
-        #y.sort()
-        nSC = 0 # number of shared contexts
-        i = 0
-        j = 0
-        while i < len(x) and j < len(y):
-            if x[i] == y[j]:
-                nSC += 1
-                i += 1
-                j += 1
-            elif x[i] < y[j]:
-                i += 1
-            else:
-                j += 1
-        return nSC
+	return len(set(from_word_to_context[word1]) & set(from_word_to_context[word2]))
 
 #def WeightedSharedContextsFunction(word1, word2, from_word_to_context,HeavilyWeightedContexts, weight): # function not used currently
 #	count = 0
@@ -600,13 +578,13 @@ print >>outfileLatex, "\\end{document}"
 print time.strftime(timeFormat ,time.localtime())
 print "10. Finding coordinates in space of low dimensionality."
 
-# Optimize - use numpy functions
 def compute_coordinates():
-	coordinates = np.zeros((NumberOfWordsForAnalysis, NumberOfEigenvectors))
-	for wordno in range(NumberOfWordsForAnalysis):
-		for eigenno in range(NumberOfEigenvectors):
-			coordinates[wordno, eigenno] = myeigenvectors[ wordno, eigenno ]
-	return coordinates
+    coordinates = dict()
+    for wordno in range(NumberOfWordsForAnalysis):
+        coordinates[wordno]= list() 
+        for eigenno in range(NumberOfEigenvectors):
+            coordinates[wordno].append( myeigenvectors[ wordno, eigenno ] )
+    return coordinates
 
 #coordinates = get_from_multiprocessing(compute_coordinates)
 coordinates = compute_coordinates()
@@ -618,14 +596,15 @@ del myeigenvectors
 
 datatype = ctypes.c_float
 
-
 def compute_words_distance_1core():
     arr = np.zeros((NumberOfWordsForAnalysis, NumberOfWordsForAnalysis))
+
     for wordno1 in range(NumberOfWordsForAnalysis):
-        for wordno2 in range(wordno1+1, NumberOfWordsForAnalysis):        
+        for wordno2 in range(wordno1+1, NumberOfWordsForAnalysis):
             distance = 0
-            x = coordinates[wordno] - coordinates[wordno] # vector
-            distance = np.sum(np.abs(np.power(x, 3)))
+            for coordno in range(NumberOfEigenvectors):
+                x = coordinates[wordno1][coordno] - coordinates[wordno2][coordno]
+                distance += abs(x ** 3)
             arr[wordno1, wordno2] = distance
             arr[wordno2, wordno1] = distance
     return arr
