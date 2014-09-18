@@ -35,7 +35,7 @@ print time.strftime(timeFormat , beginTime)
 #--------------------------------------------------------------------------------------------------#
 # multiprocessing settings and associated functions
 
-cpu = mp.cpu_count()
+cpu = int(os.environ["SLURM_CPUS_ON_NODE"])
 if cpu > 2:
 	howManyCoresToUse = cpu-1
 else:
