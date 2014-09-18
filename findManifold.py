@@ -389,6 +389,28 @@ if False:
  
 print "3. End of words and counts."
 
+#---------------------------------------------------------------------------#
+#   Create new data structures for contexts 
+#---------------------------------------------------------------------------#
+
+print "3.5 Creating a sparse matrix for the context count"
+
+context_list = list(set(context for i in from_word_to_context for context in from_word_to_context[i]))
+context_array = np.zeros((NumberOfWordsForAnalysis, len(context_list)))
+for wordno in range(NumberOfWordsForAnalysis):
+    for contextno in range(len(context_list)):
+        if (from_word_to_context[wordno][(context_list[contextno])] > 0):
+            context_array[wordno, contextno] = 1
+
+def QuickGetNumberOfSharedContexts(word1, word2):
+    return np.dot(context_array[word1], context_array[word2])
+    #nSC = 0
+    #for r in range(len(context_list)):
+    #    if context_array[word1, r] == 1 and context_array[word2, r] == 1:
+    #        nSC += 1
+    #return nSC 
+
+
 
 #---------------------------------------------------------------------------#
 #	Count context features shared by words
@@ -407,7 +429,7 @@ def counting_context_features_1core():
     arr = np.zeros((NumberOfWordsForAnalysis, NumberOfWordsForAnalysis))
     for word1 in range(0, NumberOfWordsForAnalysis):
         for word2 in range(word1+1, NumberOfWordsForAnalysis):
-            x = GetNumberOfSharedContexts(word1, word2)
+            x = QuickGetNumberOfSharedContexts(word1, word2)
             arr[word1, word2] = x
             arr[word2, word1] = x
     return arr
