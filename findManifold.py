@@ -404,12 +404,6 @@ for wordno in range(NumberOfWordsForAnalysis):
 
 def QuickGetNumberOfSharedContexts(word1, word2):
     return np.dot(context_array[word1], context_array[word2])
-    #nSC = 0
-    #for r in range(len(context_list)):
-    #    if context_array[word1, r] == 1 and context_array[word2, r] == 1:
-    #        nSC += 1
-    #return nSC 
-
 
 
 #---------------------------------------------------------------------------#
