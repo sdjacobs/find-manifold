@@ -8,19 +8,14 @@
 #-----------------------------------------------------------------------#
 
 import codecs
-#import os
 import sys
-#import string
 import operator
 import math
 import collections
 import numpy as np
-#import networkx as nx
 import ctypes
 import itertools
 import time
-#import subprocess
-#from contextlib import closing
 
 import multiprocessing as mp
 
@@ -87,6 +82,49 @@ def ReadInBigrams(bigramfile, analyzedwordlist, analyzedwordset, from_word_to_co
             context = "__ " + thesewords[1]
             wordno = analyzedwordlist.index(thisword)
             from_word_to_context[wordno][context] += 1
+
+def GetContextArray(nwords, mywords, bigrams, trigrams):
+    wordlist = mywords.keys()[ : NumberOfWordsForAnalysis]
+
+    contextlist = []
+
+    for line in trigrams:
+        c = line.split()
+        contextlist.append("__" + c[1] + c[2])
+        contextlist.append(c[0] + "__" + c[3])
+        contextlist.append(c[0] + c[1] + "__")
+    for line in bigrams:
+        c = line.split()
+        contextlist.append("__" + c[1])
+        contextlist.append(c[0] + "__")
+
+    I = [], J = [], V = [] # row, column, and value arrays for the sparse matrix
+
+    def addword(word, context):
+        w = wordlist.index(word)
+        c = contextlist.index(context)
+        I.append(w)
+        J.append(c)
+        V.append(1)
+
+    for line in trigrams:
+        c = line.split()
+        if c[0] in wordlist:
+            addword(c[0], "__" + c[1] + c[2])
+        if c[1] in wordlist:
+            addword(c[1], c[0] + "__" + c[2])
+        if c[2] in wordlist:
+            addword(c[2], c[0] + c[1] + "__")
+
+    for line in bigrams:
+        c = line.split()
+        if c[0] in wordlist:
+            addword(c[0], "__" + c[1])
+        if c[1] in wordlist:
+            addword(c[1], c[0] + "__")
+    
+    return sp.sparse.csr_matrix((V,(I,J)), shape=(nwords,len(contextlist)) )
+
 
 def MakeContextArray(NumberOfWordsForAnalysis, from_word_to_context):
     context_list = list(set(context for i in from_word_to_context for context in from_word_to_context[i]))
