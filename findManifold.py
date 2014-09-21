@@ -13,23 +13,20 @@ import operator
 import math
 import collections
 import numpy as np
+import scipy.sparse as sp
 import ctypes
 import itertools
 import time
 
 import multiprocessing as mp
 
+import scipy.spatial.distance as sd
+
 def Normalize(NumberOfWordsForAnalysis, CountOfSharedContexts):
-    diameterDict = dict()
-    for w1 in range(NumberOfWordsForAnalysis):
-        diameterDict[w1] = 0
-        for w2 in range(NumberOfWordsForAnalysis):
-            if w1 == w2:
-                continue
-            diameterDict[w1] += CountOfSharedContexts[w1,w2]
-        if diameterDict[w1] == 0:
-             diameterDict[w1] = 1
-    return diameterDict
+    arr = np.ones((NumberOfWordsForAnalysis))
+    for w in range(NumberOfWordsForAnalysis):
+        arr[w] = np.sum(CountOfSharedContexts[w]) - CountOfSharedContexts[w, w]
+    return arr
 
 def GetMyWords(wordfile):
     mywords = collections.OrderedDict()
@@ -83,47 +80,54 @@ def ReadInBigrams(bigramfile, analyzedwordlist, analyzedwordset, from_word_to_co
             wordno = analyzedwordlist.index(thisword)
             from_word_to_context[wordno][context] += 1
 
-def GetContextArray(nwords, mywords, bigrams, trigrams):
-    wordlist = mywords.keys()[ : NumberOfWordsForAnalysis]
+def GetContextArray(nwords, mywords, bigramfile, trigramfile):
 
-    contextlist = []
+    wordlist = mywords.keys()[ : nwords]
+    
+    class Namespace:
+        pass
+    ns = Namespace() # this is necessary so we can reference ncontexts from inner functions
+    ns.ncontexts = 0
+    def contexts_incr():
+        tmp = ns.ncontexts
+        ns.ncontexts += 1
+        return tmp
+    contextdict = collections.defaultdict(contexts_incr)
+    worddict = {w: wordlist.index(w) for w in wordlist}
 
-    for line in trigrams:
-        c = line.split()
-        contextlist.append("__" + c[1] + c[2])
-        contextlist.append(c[0] + "__" + c[3])
-        contextlist.append(c[0] + c[1] + "__")
-    for line in bigrams:
-        c = line.split()
-        contextlist.append("__" + c[1])
-        contextlist.append(c[0] + "__")
-
-    I = [], J = [], V = [] # row, column, and value arrays for the sparse matrix
+    # entries for sparse matrix
+    rows = []
+    cols = []
+    vals = [] 
 
     def addword(word, context):
-        w = wordlist.index(word)
-        c = contextlist.index(context)
-        I.append(w)
-        J.append(c)
-        V.append(1)
+        w = worddict[word]
+        c = contextdict[context]
+        rows.append(w)
+        cols.append(c)
+        vals.append(1)
 
-    for line in trigrams:
+    for line in trigramfile:
+        if line.startswith('#'):
+            continue
         c = line.split()
-        if c[0] in wordlist:
+        if worddict.get(c[0]) is not None:
             addword(c[0], "__" + c[1] + c[2])
-        if c[1] in wordlist:
+        if worddict.get(c[1]) is not None:
             addword(c[1], c[0] + "__" + c[2])
-        if c[2] in wordlist:
+        if worddict.get(c[2]) is not None:
             addword(c[2], c[0] + c[1] + "__")
 
-    for line in bigrams:
+    for line in bigramfile:
+        if line.startswith('#'):
+            continue
         c = line.split()
-        if c[0] in wordlist:
+        if worddict.get(c[0]) is not None:
             addword(c[0], "__" + c[1])
-        if c[1] in wordlist:
+        if worddict.get(c[1]) is not None:
             addword(c[1], c[0] + "__")
     
-    return sp.sparse.csr_matrix((V,(I,J)), shape=(nwords,len(contextlist)) )
+    return sp.csr_matrix((vals,(rows,cols)), shape=(nwords, ns.ncontexts) )
 
 
 def MakeContextArray(NumberOfWordsForAnalysis, from_word_to_context):
@@ -155,27 +159,36 @@ def counting_context_features(context_array):
 
 
 def compute_incidence_graph(NumberOfWordsForAnalysis, Diameter, CountOfSharedContexts):
-    incidencegraph= np.zeros( (NumberOfWordsForAnalysis, NumberOfWordsForAnalysis), dtype=np.int32)
+    incidencegraph= np.asarray(CountOfSharedContexts, dtype=np.int32)
 
-    for (w1, w2) in itertools.product(range(NumberOfWordsForAnalysis), repeat=2):
-        if w1 == w2:
-            incidencegraph[w1,w1] = Diameter[w1]
-        else:
-            incidencegraph[w1,w2] = CountOfSharedContexts[w1,w2]    
+    for w in range(NumberOfWordsForAnalysis):
+        incidencegraph[w, w] = Diameter[w]
+
+    #for (w1, w2) in itertools.product(range(NumberOfWordsForAnalysis), repeat=2):
+    #    if w1 == w2:
+    #        incidencegraph[w1,w1] = Diameter[w1]
+    #    else:
+    #        incidencegraph[w1,w2] = CountOfSharedContexts[w1,w2]    
+    
+
     return incidencegraph
 
 
 def compute_laplacian(NumberOfWordsForAnalysis, Diameter, incidencegraph):
-    mylaplacian = np.zeros((NumberOfWordsForAnalysis, NumberOfWordsForAnalysis), dtype=np.float32 )
+    #mylaplacian = np.zeros((NumberOfWordsForAnalysis, NumberOfWordsForAnalysis), dtype=np.float32 )
 
-    for (i, j) in itertools.product(range(NumberOfWordsForAnalysis), repeat=2):
-        if i == j:
-            mylaplacian[i,j] = 1
-        else:
-            if incidencegraph[i,j] == 0:
-                mylaplacian[i,j]=0
-            else:
-                mylaplacian[i,j] = -1 * incidencegraph[i,j]/ math.sqrt ( Diameter[i] * Diameter[j] )
+    #for (i, j) in itertools.product(range(NumberOfWordsForAnalysis), repeat=2):
+    #    if i == j:
+    #        mylaplacian[i,j] = 1
+    #    else:
+    #        if incidencegraph[i,j] == 0:
+    #            mylaplacian[i,j]=0
+    #        else:
+    #mylaplacian[i,j] = -1 * incidencegraph[i,j]/ math.sqrt ( Diameter[i] * Diameter[j] )
+    
+    D = -1 / np.sqrt(np.outer(Diameter, Diameter))
+    mylaplacian = D * incidencegraph # broadcasts the multiplication, so A_(i,j) = B_(i,j) * C_(i, j)
+    
     return mylaplacian
 
 def LatexAndEigenvectorOutput(LatexFlag, PrintEigenvectorsFlag, infileWordsname, outfileLatex, outfileEigenvectors, NumberOfEigenvectors, myeigenvalues, NumberOfWordsForAnalysis):
@@ -250,25 +263,34 @@ def compute_coordinates(NumberOfWordsForAnalysis, NumberOfEigenvectors, myeigenv
             Coordinates[wordno].append( myeigenvectors[ wordno, eigenno ] )
     return Coordinates
 
-def compute_words_distance(nwords, neigs, coordinates):
+def compute_words_distance_old(nwords, coordinates):
     arr = np.zeros((nwords, nwords))
-
     for wordno1 in range(nwords):
         for wordno2 in range(wordno1+1, nwords):
             distance = 0
-            for coordno in range(neigs):
-                x = coordinates[wordno1][coordno] - coordinates[wordno2][coordno]
-                distance += abs(x ** 3)
+            x = coordinates[wordno1] - coordinates[wordno2]
+            distance = np.sum(np.abs(np.power(x, 3)))
             arr[wordno1, wordno2] = distance
             arr[wordno2, wordno1] = distance
+    
     return arr
 
-def compute_closest_neighbors(analyzedwordlist, wordsdistance, NumberOfNeighbors):
+def compute_words_distance(nwords, coordinates):
+    #def distance(u, v):
+    #    return np.sum(np.abs(np.power(u - v, 3)));
+    return sd.squareform(sd.pdist(coordinates, "euclidean"))
+
+def compute_closest_neighbors_old(analyzedwordlist, wordsdistance, NumberOfNeighbors):
     closestNeighbors = dict()
     for (wordno1, word1) in enumerate(analyzedwordlist):
         neighborWordNumberList = [wordno2 for (wordno2, distance) in sorted(enumerate(list(wordsdistance[wordno1])), key=lambda x:x[1])][1:]
         neighborWordNumberList = neighborWordNumberList[: NumberOfNeighbors]
         closestNeighbors[wordno1] = neighborWordNumberList
+    return closestNeighbors
+    
+def compute_closest_neighbors(analyzedwordlist, wordsdistance, NumberOfNeighbors):
+    sortedNeighbors = wordsdistance.argsort() # indices of sorted rows, low to high
+    closestNeighbors = sortedNeighbors [:,:NumberOfNeighbors] # truncate columns at NumberOfNeighbors 
     return closestNeighbors
 
 def main(argv):

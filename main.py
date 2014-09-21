@@ -40,17 +40,6 @@ def main(argv):
     print "Number of words that will be analyzed:", NumberOfWordsForAnalysis
     print "Number of neighbors:", NumberOfNeighbors
 
-    # initialize data structures
-    closestNeighbors     = collections.OrderedDict() #a dict whose values are lists; the lists are the closest words to the key.
-    contexts         = dict() # key is word, value is a dict of contexts (used to be a list of contexts)
-    coordinates         = dict()
-    Diameter = dict()
-
-    from_word_to_context = collections.defaultdict(collections.Counter) # this dict takes a word as key, and returns a collections.Counter dict as the value; the value is a dict with (context, frequency count) pairs.
-
-    wordsdistance         = dict() # key is a word, word1,  being analyzed, value is a pair of word-index-number and euclidean distance (word2, distance). This will be sorted to get the nearest neighbors to word1.
-
-
     # open files
     outfileFromWordToContexts = open(outfilenameFromWordToContexts, 'w')
     outfileNeighbors = open(outfilenameNeighbors, 'w')
@@ -59,8 +48,6 @@ def main(argv):
     trigramfile         = open(infileTrigramsname)
     bigramfile         = open(infileBigramsname)
     
-
-
     for outfile in [outfileNeighbors, outfileFromWordToContexts]:
         print >>outfile, "# language:", \
                 args.languagename, "\n# corpus:",\
@@ -72,23 +59,21 @@ def main(argv):
 
     mywords = GetMyWords(wordfile)
     wordfile.close()
-    print "1. Word file is ", infileWordsname, '\t corpus has', len(mywords), 'words'
+    print "Word file is ", infileWordsname, '\t corpus has', len(mywords), 'words'
 
 
     if NumberOfWordsForAnalysis > len(mywords):
         NumberOfWordsForAnalysis = len(mywords)
         print 'number of words for analysis reduced to', NumberOfWordsForAnalysis
 
-    analyzedwordlist = mywords.keys()[ : NumberOfWordsForAnalysis]
-    analyzedwordset = set(analyzedwordlist)
-    
-    print "Reading in trigrams and bigrams"
-    ReadInTrigrams(trigramfile, analyzedwordlist, analyzedwordset, from_word_to_context)
-    ReadInBigrams(bigramfile, analyzedwordlist, analyzedwordset, from_word_to_context)
+    analyzedwordlist = mywords.keys()[ : NumberOfWordsForAnalysis] 
    
-    print "Counting shared contexts"
-    context_array = MakeContextArray(NumberOfWordsForAnalysis, from_word_to_context)
-    CountOfSharedContexts = counting_context_features(context_array) # TODO: which one?
+    print "Reading bigrams/trigrams"
+
+    context_array = GetContextArray(NumberOfWordsForAnalysis, mywords, bigramfile, trigramfile)
+    
+    print "Computing shared contexts"
+    CountOfSharedContexts = context_array.dot(context_array.T).todense()
 
     print "Computing diameter"
     Diameter = Normalize(NumberOfWordsForAnalysis, CountOfSharedContexts)
@@ -99,16 +84,14 @@ def main(argv):
     print "Computing mylaplacian"
     mylaplacian = compute_laplacian(NumberOfWordsForAnalysis, Diameter, incidencegraph)
 
-    print "8. compute eigenvectors...",
+    print "Compute eigenvectors..."
     myeigenvalues, myeigenvectors = np.linalg.eigh(mylaplacian)
     
-    print "10. finding coordinates in space of low dimensionality."
-    Coordinates =  compute_coordinates(NumberOfWordsForAnalysis, NumberOfEigenvectors, myeigenvectors)
-    
-    print '       coordinates computed. now computing distances between words...',
-    wordsdistance = compute_words_distance(NumberOfWordsForAnalysis, NumberOfEigenvectors, Coordinates)
+    print 'Coordinates computed. now computing distances between words...'
+    coordinates = myeigenvectors[:,:NumberOfEigenvectors] # take first N columns of eigenvector matrix
+    wordsdistance = compute_words_distance(NumberOfWordsForAnalysis, coordinates)
 
-    print '      computing nearest neighbors now... ',
+    print 'Computing nearest neighbors now... '
     closestNeighbors = compute_closest_neighbors(analyzedwordlist, wordsdistance, NumberOfNeighbors)
 
     print "Output to files"
