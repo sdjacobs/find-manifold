@@ -13,14 +13,15 @@ import operator
 import math
 import collections
 import numpy as np
-import scipy.sparse as sp
 import ctypes
 import itertools
 import time
 
-import multiprocessing as mp
+#import multiprocessing as mp
 
 import scipy.spatial.distance as sd
+import scipy.sparse as sp
+import scipy.sparse.linalg as sl
 
 def Normalize(NumberOfWordsForAnalysis, CountOfSharedContexts):
     arr = np.ones((NumberOfWordsForAnalysis))
@@ -163,33 +164,80 @@ def compute_incidence_graph(NumberOfWordsForAnalysis, Diameter, CountOfSharedCon
 
     for w in range(NumberOfWordsForAnalysis):
         incidencegraph[w, w] = Diameter[w]
+    return incidencegraph
 
-    #for (w1, w2) in itertools.product(range(NumberOfWordsForAnalysis), repeat=2):
-    #    if w1 == w2:
-    #        incidencegraph[w1,w1] = Diameter[w1]
-    #    else:
-    #        incidencegraph[w1,w2] = CountOfSharedContexts[w1,w2]    
-    
+def compute_incidence_graph_old(NumberOfWordsForAnalysis, Diameter, CountOfSharedContexts):
+
+    for (w1, w2) in itertools.product(range(NumberOfWordsForAnalysis), repeat=2):
+        if w1 == w2:
+            incidencegraph[w1,w1] = Diameter[w1]
+        else:
+            incidencegraph[w1,w2] = CountOfSharedContexts[w1,w2]    
 
     return incidencegraph
 
 
-def compute_laplacian(NumberOfWordsForAnalysis, Diameter, incidencegraph):
-    #mylaplacian = np.zeros((NumberOfWordsForAnalysis, NumberOfWordsForAnalysis), dtype=np.float32 )
+def compute_laplacian_old(NumberOfWordsForAnalysis, Diameter, incidencegraph):
+    mylaplacian = np.zeros((NumberOfWordsForAnalysis, NumberOfWordsForAnalysis), dtype=np.float32 )
 
-    #for (i, j) in itertools.product(range(NumberOfWordsForAnalysis), repeat=2):
-    #    if i == j:
-    #        mylaplacian[i,j] = 1
-    #    else:
-    #        if incidencegraph[i,j] == 0:
-    #            mylaplacian[i,j]=0
-    #        else:
-    #mylaplacian[i,j] = -1 * incidencegraph[i,j]/ math.sqrt ( Diameter[i] * Diameter[j] )
-    
-    D = -1 / np.sqrt(np.outer(Diameter, Diameter))
-    mylaplacian = D * incidencegraph # broadcasts the multiplication, so A_(i,j) = B_(i,j) * C_(i, j)
-    
+    for (i, j) in itertools.product(range(NumberOfWordsForAnalysis), repeat=2):
+        if i == j:
+            mylaplacian[i,j] = 1
+        else:
+            if incidencegraph[i,j] == 0:
+                mylaplacian[i,j]=0
+            else:
+                mylaplacian[i,j] = -1 * incidencegraph[i,j]/ math.sqrt ( Diameter[i] * Diameter[j] )
     return mylaplacian
+
+def compute_laplacian(NumberOfWordsForAnalysis, Diameter, incidencegraph): 
+    D = np.sqrt(np.outer(Diameter, Diameter))
+    D[D==0] = 1 # we want to NOT have div-by-zero errors, but if D[i,j] = 0 then incidencegraph[i,j] = 0 too.
+    mylaplacian = (1/D) * incidencegraph # broadcasts the multiplication, so A[i,j] = B[i,j] * C[i, j]
+    return mylaplacian
+
+def compute_coordinates(NumberOfWordsForAnalysis, NumberOfEigenvectors, myeigenvectors):
+    Coordinates = dict()
+    for wordno in range(NumberOfWordsForAnalysis):
+        Coordinates[wordno]= list() 
+        for eigenno in range(NumberOfEigenvectors):
+            Coordinates[wordno].append( myeigenvectors[ wordno, eigenno ] )
+    return Coordinates
+
+def compute_words_distance_old(nwords, coordinates):
+    arr = np.zeros((nwords, nwords))
+    for wordno1 in range(nwords):
+        for wordno2 in range(wordno1+1, nwords):
+            distance = 0
+            x = coordinates[wordno1] - coordinates[wordno2]
+            distance = np.sum(np.abs(np.power(x, 3)))
+            arr[wordno1, wordno2] = distance
+            arr[wordno2, wordno1] = distance
+    
+    return arr
+
+def compute_words_distance(nwords, coordinates):
+    #def distance(u, v):
+    #    return np.sum(np.abs(np.power(u - v, 3)));
+    return sd.squareform(sd.pdist(coordinates, "euclidean"))
+
+def compute_closest_neighbors_old(analyzedwordlist, wordsdistance, NumberOfNeighbors):
+    closestNeighbors = dict()
+    for (wordno1, word1) in enumerate(analyzedwordlist):
+        neighborWordNumberList = [wordno2 for (wordno2, distance) in sorted(enumerate(list(wordsdistance[wordno1])), key=lambda x:x[1])][1:]
+        neighborWordNumberList = neighborWordNumberList[: NumberOfNeighbors]
+        closestNeighbors[wordno1] = neighborWordNumberList
+    return closestNeighbors
+    
+def compute_closest_neighbors(analyzedwordlist, wordsdistance, NumberOfNeighbors):
+    sortedNeighbors = wordsdistance.argsort() # indices of sorted rows, low to high
+    closestNeighbors = sortedNeighbors [:,:NumberOfNeighbors] # truncate columns at NumberOfNeighbors 
+    return closestNeighbors
+
+
+def GetEigenvectors(laplacian):
+    laplacian_sparse = sp.csr_matrix(laplacian)
+    return sl.eigs(laplacian_sparse)
 
 def LatexAndEigenvectorOutput(LatexFlag, PrintEigenvectorsFlag, infileWordsname, outfileLatex, outfileEigenvectors, NumberOfEigenvectors, myeigenvalues, NumberOfWordsForAnalysis):
     if LatexFlag:
@@ -254,44 +302,6 @@ def LatexAndEigenvectorOutput(LatexFlag, PrintEigenvectorsFlag, infileWordsname,
                     print >>outfileLatex, "\\newpage" 
             print >>outfileLatex, "\\end{document}" 
 
-
-def compute_coordinates(NumberOfWordsForAnalysis, NumberOfEigenvectors, myeigenvectors):
-    Coordinates = dict()
-    for wordno in range(NumberOfWordsForAnalysis):
-        Coordinates[wordno]= list() 
-        for eigenno in range(NumberOfEigenvectors):
-            Coordinates[wordno].append( myeigenvectors[ wordno, eigenno ] )
-    return Coordinates
-
-def compute_words_distance_old(nwords, coordinates):
-    arr = np.zeros((nwords, nwords))
-    for wordno1 in range(nwords):
-        for wordno2 in range(wordno1+1, nwords):
-            distance = 0
-            x = coordinates[wordno1] - coordinates[wordno2]
-            distance = np.sum(np.abs(np.power(x, 3)))
-            arr[wordno1, wordno2] = distance
-            arr[wordno2, wordno1] = distance
-    
-    return arr
-
-def compute_words_distance(nwords, coordinates):
-    #def distance(u, v):
-    #    return np.sum(np.abs(np.power(u - v, 3)));
-    return sd.squareform(sd.pdist(coordinates, "euclidean"))
-
-def compute_closest_neighbors_old(analyzedwordlist, wordsdistance, NumberOfNeighbors):
-    closestNeighbors = dict()
-    for (wordno1, word1) in enumerate(analyzedwordlist):
-        neighborWordNumberList = [wordno2 for (wordno2, distance) in sorted(enumerate(list(wordsdistance[wordno1])), key=lambda x:x[1])][1:]
-        neighborWordNumberList = neighborWordNumberList[: NumberOfNeighbors]
-        closestNeighbors[wordno1] = neighborWordNumberList
-    return closestNeighbors
-    
-def compute_closest_neighbors(analyzedwordlist, wordsdistance, NumberOfNeighbors):
-    sortedNeighbors = wordsdistance.argsort() # indices of sorted rows, low to high
-    closestNeighbors = sortedNeighbors [:,:NumberOfNeighbors] # truncate columns at NumberOfNeighbors 
-    return closestNeighbors
 
 def main(argv):
     timeFormat = '      current time: %Y-%m-%d %H:%M:%S'
@@ -488,11 +498,11 @@ def main(argv):
 
     print time.strftime(timeFormat ,time.localtime())
     print "10. finding coordinates in space of low dimensionality."
-    Coordinates =  compute_coordinates(NumberOfWordsForAnalysis, NumberOfEigenvectors, myeigenvectors)
+    #Coordinates =  compute_coordinates(NumberOfWordsForAnalysis, NumberOfEigenvectors, myeigenvectors)
     print time.strftime(timeFormat ,time.localtime())
     
     print '       coordinates computed. now computing distances between words...',
-    wordsdistance = compute_words_distance(NumberOfWordsForAnalysis, NumberOfEigenvectors, Coordinates)
+    wordsdistance = compute_words_distance(NumberOfWordsForAnalysis, myeigenvectors)
     print 'Done.'
 
     print time.strftime(timeFormat ,time.localtime())

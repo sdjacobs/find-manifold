@@ -1,6 +1,9 @@
 from findManifold import *
 import argparse
 
+
+# argparse is a python module that makes creating command-line interfaces very very easy.
+# Try: python main.py --help
 def makeArgParser():
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("nWords", help="Number of words for analysis", type=int, default=9)
@@ -16,19 +19,20 @@ def makeArgParser():
             default="output")
     parser.add_argument("--name", help="Corpus name", type=str, default="english-brown")
     parser.add_argument("--languagename", help="Language name", type=str, default="english")
-
-
     return parser
 
+def DEBUG(s):
+    print s
+    sys.stdout.flush()
 
 def main(argv):
-
-    punctuation         = " $/+.,;:?!()\"[]"
-
+    
     args = makeArgParser().parse_args()
+    
     NumberOfWordsForAnalysis = args.nWords
     NumberOfNeighbors = args.nNeighbors
     NumberOfEigenvectors = args.nEigenvectors
+    
     infileBigramsname = args.bigrams
     infileTrigramsname = args.trigrams
     infileWordsname = args.words
@@ -68,33 +72,33 @@ def main(argv):
 
     analyzedwordlist = mywords.keys()[ : NumberOfWordsForAnalysis] 
    
-    print "Reading bigrams/trigrams"
-
+    DEBUG("Reading bigrams/trigrams")
     context_array = GetContextArray(NumberOfWordsForAnalysis, mywords, bigramfile, trigramfile)
     
-    print "Computing shared contexts"
+    DEBUG("Computing shared contexts")
     CountOfSharedContexts = context_array.dot(context_array.T).todense()
 
-    print "Computing diameter"
+    DEBUG("Computing diameter")
     Diameter = Normalize(NumberOfWordsForAnalysis, CountOfSharedContexts)
 
-    print "Computing incidence graph"
+    DEBUG("Computing incidence graph")
     incidencegraph = compute_incidence_graph(NumberOfWordsForAnalysis, Diameter, CountOfSharedContexts)
     
-    print "Computing mylaplacian"
+    DEBUG("Computing mylaplacian")
     mylaplacian = compute_laplacian(NumberOfWordsForAnalysis, Diameter, incidencegraph)
 
-    print "Compute eigenvectors..."
-    myeigenvalues, myeigenvectors = np.linalg.eigh(mylaplacian)
-    
-    print 'Coordinates computed. now computing distances between words...'
+    DEBUG("Compute eigenvectors...")
+    myeigenvalues, myeigenvectors = GetEigenvectors(mylaplacian)
+   
+
+    DEBUG('Coordinates computed. now computing distances between words...')
     coordinates = myeigenvectors[:,:NumberOfEigenvectors] # take first N columns of eigenvector matrix
     wordsdistance = compute_words_distance(NumberOfWordsForAnalysis, coordinates)
 
-    print 'Computing nearest neighbors now... '
+    DEBUG('Computing nearest neighbors now... ')
     closestNeighbors = compute_closest_neighbors(analyzedwordlist, wordsdistance, NumberOfNeighbors)
 
-    print "Output to files"
+    DEBUG("Output to files")
     for (wordno, word) in enumerate(analyzedwordlist):
         print >>outfileNeighbors, word, ' '.join([analyzedwordlist[idx] for idx in closestNeighbors[wordno]])
 
